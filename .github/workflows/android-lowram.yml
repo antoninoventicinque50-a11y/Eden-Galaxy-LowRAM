@@ -31,6 +31,14 @@ jobs:
         run: |
           sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.31.6'
           df -h .
+      - name: Prepare SDL3 Android Java bindings
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse --branch release-3.4.8 https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl3-sources"
+          git -C "$RUNNER_TEMP/sdl3-sources" sparse-checkout set android-project/app/src/main/java/org/libsdl/app
+          mkdir -p externals/generated/sdl/java/org/libsdl/app
+          cp "$RUNNER_TEMP/sdl3-sources"/android-project/app/src/main/java/org/libsdl/app/*.java externals/generated/sdl/java/org/libsdl/app/
+          test -s externals/generated/sdl/java/org/libsdl/app/SDL.java
+          echo "SDL3 Java bindings present before Kotlin compilation"
       - name: Build standalone LowRAM APK
         working-directory: src/android
         run: |
