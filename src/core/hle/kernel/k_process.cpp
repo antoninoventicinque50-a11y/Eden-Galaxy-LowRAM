@@ -4,7 +4,14 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <cstdint>
 #include <random>
+#ifdef __ANDROID__
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+#include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
@@ -1273,7 +1280,38 @@ void KProcess::LoadModule(KernelCore& kernel, CodeSet code_set, KProcessAddress 
         m_page_table.SetProcessMemoryPermission(segment.addr + base_addr, segment.size, permission);
     };
 
+#ifdef __ANDROID__
+    // Copy large Galaxy modules in small chunks, releasing each consumed source page.
+    // Always write the full image, including zeroes, to preserve guest memory semantics.
+    if (GetProgramId() == 0x010099C022B96000ULL && code_set.memory.size() >= (256ULL << 20)) {
+        constexpr std::size_t ChunkBytes = 8ULL << 20;
+        const long host_page_size = sysconf(_SC_PAGESIZE);
+        const std::uintptr_t page_size = host_page_size > 0 ?
+            static_cast<std::uintptr_t>(host_page_size) : 0;
+        std::size_t released_bytes = 0;
+        for (std::size_t offset = 0; offset < code_set.memory.size(); offset += ChunkBytes) {
+            const auto bytes = std::min(ChunkBytes, code_set.memory.size() - offset);
+            auto* source = code_set.memory.data() + offset;
+            this->GetMemory().WriteBlock(base_addr + offset, source, bytes);
+            if (page_size != 0) {
+                const auto first = reinterpret_cast<std::uintptr_t>(source);
+                const auto last = first + bytes;
+                const auto first_page = ((first + page_size - 1) / page_size) * page_size;
+                const auto last_page = (last / page_size) * page_size;
+                if (last_page > first_page &&
+                    madvise(reinterpret_cast<void*>(first_page), last_page - first_page, MADV_DONTNEED) == 0) {
+                    released_bytes += last_page - first_page;
+                }
+            }
+        }
+        LOG_INFO(HW_Memory, "[GalaxyRAM] Copied {} MiB in chunks, discarded {} MiB of source pages",
+                 code_set.memory.size() / (1ULL << 20), released_bytes / (1ULL << 20));
+    } else {
+        this->GetMemory().WriteBlock(base_addr, code_set.memory.data(), code_set.memory.size());
+    }
+#else
     this->GetMemory().WriteBlock(base_addr, code_set.memory.data(), code_set.memory.size());
+#endif
 
     ReprotectSegment(code_set.CodeSegment(), Svc::MemoryPermission::ReadExecute);
     ReprotectSegment(code_set.RODataSegment(), Svc::MemoryPermission::Read);
