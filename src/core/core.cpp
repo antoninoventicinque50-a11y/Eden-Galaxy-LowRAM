@@ -507,6 +507,12 @@ struct System::Impl {
         cpu_manager.Shutdown();
         debugger.reset();
         kernel.Shutdown();
+#if defined(__ANDROID__)
+        // [GalaxyRAM v3] A new launch must not inherit several GiB of backed guest RAM.
+        // All kernel/GPU consumers have been destroyed above. ReinitializeIfNecessary()
+        // recreates DeviceMemory on the next launch.
+        device_memory.reset();
+#endif
         stop_event = {};
         Network::RestartSocketOperations();
 

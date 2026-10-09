@@ -105,35 +105,27 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     codeset.memory.resize(module_start + last_segment_it->location + last_segment_it->size);
     {
         std::vector<u8> compressed_data(*std::ranges::max_element(nso_header.segments_compressed_size));
-        std::vector<u8> decompressed_size(std::ranges::max_element(nso_header.segments, [](auto const& a, auto const& b) {
-            return a.size < b.size;
-        })->size);
+        // [GalaxyRAM v3] Decompress directly into the final code image instead of
+        // holding an additional max-segment-sized staging buffer in RAM.
         for (std::size_t i = 0; i < nso_header.segments.size(); ++i) {
             nso_file.Read(compressed_data.data(), nso_header.segments_compressed_size[i], nso_header.segments[i].offset);
             if (nso_header.IsSegmentCompressed(i)) {
+                auto* destination = codeset.memory.data() + module_start + nso_header.segments[i].location;
                 if (nso_header.IsZBICCompressed()) {
-                    // ZBIC compression
                     const int r = Common::Compression::DecompressDataZBIC(
-                        std::span<u8>{decompressed_size}.first(nso_header.segments[i].size),
+                        std::span<u8>{destination, nso_header.segments[i].size},
                         std::span<const u8>{compressed_data}.first(nso_header.segments_compressed_size[i])
                     );
                     ASSERT(r > 0);
                 } else {
-                    // LZ4 compression
-                    int r = Common::Compression::DecompressDataLZ4(
-                        decompressed_size.data(),
+                    const int r = Common::Compression::DecompressDataLZ4(
+                        destination,
                         nso_header.segments[i].size,
                         compressed_data.data(),
                         nso_header.segments_compressed_size[i]
                     );
                     ASSERT(r == int(nso_header.segments[i].size));
                 }
-
-                std::memcpy(
-                    codeset.memory.data() + module_start + nso_header.segments[i].location,
-                    decompressed_size.data(),
-                    nso_header.segments[i].size
-                );
             } else {
                 // Not compressed
                 std::memcpy(

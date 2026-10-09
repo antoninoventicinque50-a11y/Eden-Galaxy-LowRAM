@@ -51,6 +51,7 @@
 
 #endif // ^^^ POSIX ^^^
 
+#include <atomic>
 #include <mutex>
 #include <random>
 
@@ -791,6 +792,27 @@ void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission 
 }
 
 void HostMemory::ClearBackingRegion(size_t physical_offset, size_t length, u32 fill_value) {
+#if defined(__ANDROID__) && defined(MADV_REMOVE)
+    // [GalaxyRAM v3] Backing is normally MAP_SHARED memfd (tmpfs). Clearing pages by
+    // memset commits every 4 KiB, potentially materializing 3+ GiB of untouched
+    // guest RAM. MADV_REMOVE punches holes, preserves zero-on-read semantics across
+    // guest aliases, and returns those physical pages to the Android kernel.
+    // Only use on whole pages being explicitly reset to zero. Never discard
+    // nonzero fills or partial pages, and fall back if the kernel rejects it.
+    if (fill_value == 0 && length >= PageAlignment &&
+        (physical_offset % PageAlignment) == 0 && (length % PageAlignment) == 0 &&
+        backing_base &&
+        madvise(backing_base + physical_offset, length, MADV_REMOVE) == 0) {
+        static std::atomic<size_t> removed_bytes{0};
+        const auto total = removed_bytes.fetch_add(length, std::memory_order_relaxed) + length;
+        if ((total % (256ULL << 20)) < length) {
+            LOG_INFO(HW_Memory, "[GalaxyRAM v3] Sparse-zeroed {} MiB of guest backing (total)",
+                     total / (1ULL << 20));
+        }
+        return;
+    }
+#endif
+    // Unsupported filesystem/kernel, or non-zero/unaligned fill: unchanged behavior.
     std::memset(backing_base + physical_offset, fill_value, length);
 }
 

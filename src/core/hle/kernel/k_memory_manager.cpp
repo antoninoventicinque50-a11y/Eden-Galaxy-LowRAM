@@ -525,9 +525,11 @@ bool KMemoryManager::Impl::ProcessOptimizedAllocation(KernelCore& kernel, KPhysi
             // If not, it's new.
             any_new = true;
 
-            // Fill the page.
-            auto* ptr = device_memory.GetPointer<u8>(m_heap.GetAddress());
-            std::memset(ptr + offset * PageSize, fill_pattern, PageSize);
+            // [GalaxyRAM v3] Use sparse zero initialization even when optimized
+            // memory allocation is enabled. Non-zero fill is preserved unchanged.
+            device_memory.buffer.ClearBackingRegion(
+                GetInteger(m_heap.GetAddress()) - Core::DramMemoryMap::Base + offset * PageSize,
+                PageSize, fill_pattern);
         }
 
         offset++;
