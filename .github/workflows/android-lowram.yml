@@ -1,0 +1,43 @@
+name: Eden Galaxy LowRAM Android
+on:
+  workflow_dispatch:
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx3g'
+    steps:
+      - name: Checkout Eden LowRAM
+        uses: actions/checkout@v4
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
+          df -h .
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android build tools
+        run: |
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.31.6'
+          df -h .
+      - name: Build standalone LowRAM APK
+        working-directory: src/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleMainlineRelWithDebInfo -Pnightly=false --no-daemon --max-workers=2 --stacktrace
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Eden-Galaxy-LowRAM-Android
+          path: src/android/app/build/outputs/apk/mainline/relWithDebInfo/*.apk
+          if-no-files-found: error
+          retention-days: 7
